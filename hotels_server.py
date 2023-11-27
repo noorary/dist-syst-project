@@ -28,8 +28,6 @@ def save_hotel_data():
 
 def book_hotel(hotel_request, request_id):
 
-    print(hotel_data)
-
     hotel_name = hotel_request.get('name', '')
     week_number = hotel_request.get('week', '')
 

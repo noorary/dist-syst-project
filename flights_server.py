@@ -61,10 +61,6 @@ def book_flights(departure_request, return_request, request_id):
         departure_flight = next((flight for flight in flights_data["flights"] if flight["flight_number"] == departure_flight_number), None)
         return_flight = next((flight for flight in flights_data["flights"] if flight["flight_number"] == return_flight_number), None)
 
-        print('reserved and total')
-        print(departure_flight["reserved_seats"])
-        print(departure_flight["total_seats"])
-
         if int(departure_flight["reserved_seats"]) < int(departure_flight["total_seats"]):
             departure_flight["reserved_seats"] += 1
             save_flight_data()
