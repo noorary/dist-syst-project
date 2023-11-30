@@ -15,6 +15,15 @@ def get_request_id(xml_request):
     value = root.find(f".//member[name='id']/value")
     return value[0].text
 
+def send_prepare_to_participant(participant, request_id):
+    return participant.prepare_commit(request_id)
+
+def send_commit_to_participant(participant, request_id):
+    return participant.commit(request_id)
+
+def send_abort_to_participant(participant, request_id):
+    return participant.abort(request_id)
+
 
 def parse_xml_request(xml_request, element_name):
 
@@ -56,8 +65,9 @@ def send_booking_request(xml_request):
     hotels_server = ServerProxy('http://localhost:8002')
 
     # choose used server randomly to mock load balancing between servers for demo purposes
-    servers = [flights_server, hotels_server]
-    chosen_server = random.choice(servers)
+    # servers = [flights_server, hotels_server]
+    # chosen_server = random.choice(servers)
+    chosen_server = hotels_server
     event_logger.info('chosen server: %s'%(chosen_server))
     result = chosen_server.handle_request(hotel, departure_flight, returning_flight, request_id)
 

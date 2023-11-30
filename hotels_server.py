@@ -1,5 +1,5 @@
 from xmlrpc.server import SimpleXMLRPCServer
-from xmlrpc.client import loads
+from xmlrpc.client import ServerProxy, loads
 import json
 import os
 
@@ -9,6 +9,30 @@ import utils.ds_logging as ds_logging
 
 event_logger = ds_logging.get_event_logger("hotelreservation.events")
 transaction_logger = ds_logging.get_transaction_logger("hotelreservation")
+
+# TODO add flight data to state array and logic for committing flights
+# --- state array ---
+state_array = [
+    {"request_id": "0",
+     "status": "placeholder",
+     "hotel": {"name": "Hotel Name Placeholder", "week_number": "1"}}
+]
+
+def update_state_array(request_id, hotel_info, new_state, state_array):
+    for item in state_array:
+        if item['request_id'] == request_id:
+            item['state'] = new_state
+            item['hotel'] = hotel_info
+            break
+    else:
+        state_array.append({"request_id": request_id, "state": new_state, "hotel": hotel_info})
+
+def contains_hotel_week(state_array, hotel_name, week_number):
+    for item in state_array:
+        hotel_info = item.get('hotel')
+        if hotel_info and hotel_info.get('name') == hotel_name and hotel_info.get('week') == week_number:
+            return True
+    return False
 
 # --- hotel data ---
 event_logger.info("Loading hotel data")
@@ -73,9 +97,63 @@ def save_flight_data():
         json.dump(flights_data, file)
 # --- end flight data ---
 
+def prepare_commit(hotel_request, departure_request, return_request, request_id):
+    hotel_name = hotel_request.get('name', '')
+    week_number = hotel_request.get('week', '')
+    event_logger.info("hotel name: %s" %(hotel_name))
+    event_logger.info("week number: %s" %(week_number))
+
+    departure_flight_number = departure_request.get('flight_number', '')
+    return_flight_number = return_request.get('flight_number', '')
+    event_logger.info("departure flight number: %s" %(departure_flight_number))
+    event_logger.info("return flight number: %s" %(return_flight_number))
+
+    hotel_committed = commit_book_hotel(hotel_name, week_number)
+    flights_committed = commit_book_flights(departure_flight_number, return_flight_number)
+
+    if not(hotel_committed and flights_committed and not contains_hotel_week(state_array, hotel_name, week_number)):
+        return False
+
+    hotel_info = {"name": hotel_name, "week_number": week_number}
+    update_state_array(request_id, hotel_info, "processing", state_array)
+    return True
+
+def commit(hotel_request, departure_request, return_request, request_id):
+    hotel_name = hotel_request.get('name', '')
+    week_number = hotel_request.get('week', '')
+    event_logger.info("hotel name: %s" %(hotel_name))
+    event_logger.info("week number: %s" %(week_number))
+
+    departure_flight_number = departure_request.get('flight_number', '')
+    return_flight_number = return_request.get('flight_number', '')
+    event_logger.info("departure flight number: %s" %(departure_flight_number))
+    event_logger.info("return flight number: %s" %(return_flight_number))
+
+    hotel_reservation_OK, hotel_status_msg = book_hotel(hotel_name, week_number)
+    event_logger.info("hotel reservation status: %s" %(hotel_status_msg))
+    flight_reservation_OK, flight_status_msg = book_flights(departure_request, return_request)
+    event_logger.info("flight reservation status: %s" %(flight_status_msg))
+    reservation_OK = hotel_reservation_OK and flight_reservation_OK
+
+    if not(reservation_OK):
+        abort(hotel_request, departure_request, return_request, request_id)
+        return False
+
+    hotel_info = {"name": hotel_name, "week_number": week_number}
+    update_state_array(request_id, hotel_info, "done", state_array)
+    return True
+
+def abort(hotel_request, departure_request, return_request, request_id):
+    # TODO should remove reservations from file if it was already updated
+    hotel_info = {"name": '', "week_number": ''}
+    update_state_array(request_id, hotel_info, "aborted", state_array)
+    return True
+
 
 def handle_request(hotel_request, departure_request, return_request, request_id):
-
+    
+    flights_server = ServerProxy('http://localhost:8001')
+    
     event_logger.info("hotel request data:")
     event_logger.info(hotel_request)
 
@@ -85,22 +163,86 @@ def handle_request(hotel_request, departure_request, return_request, request_id)
 
     hotel_name = hotel_request.get('name', '')
     week_number = hotel_request.get('week', '')
-
     event_logger.info("hotel name: %s" %(hotel_name))
     event_logger.info("week number: %s" %(week_number))
+
+    departure_flight_number = departure_request.get('flight_number', '')
+    return_flight_number = return_request.get('flight_number', '')
+    event_logger.info("departure flight number: %s" %(departure_flight_number))
+    event_logger.info("return flight number: %s" %(return_flight_number))
+
+    flights_server_prepared  = flights_server.prepare_commit(hotel_request, departure_request, return_request, request_id)
+    event_logger.info("flights server prepared: %s" %(flights_server_prepared))
+    if not flights_server_prepared:
+        abort(hotel_request, departure_request, return_request, request_id)
+        flights_server.abort(hotel_request, departure_request, return_request, request_id)
+        return False
+
+    hotel_info = {"name": hotel_name, "week_number": week_number}
+    update_state_array(request_id, hotel_info, "processing", state_array)
 
     hotel_reservation_OK, hotel_status_msg = book_hotel(hotel_name, week_number)
     event_logger.info("hotel reservation status: %s" %(hotel_status_msg))
     flight_reservation_OK, flight_status_msg = book_flights(departure_request, return_request)
     event_logger.info("flight reservation status: %s" %(flight_status_msg))
     reservation_OK = hotel_reservation_OK and flight_reservation_OK
+
+    flights_server_committed = flights_server.commit(hotel_request, departure_request, return_request, request_id)
+    if not flights_server_committed:
+        abort(hotel_request, departure_request, return_request, request_id)
+        flights_server.abort(hotel_request, departure_request, return_request, request_id)
+        return False
+
     status_msg = hotel_status_msg + " & " + flight_status_msg
     event_logger.info("reservation status: %s" %(status_msg))
 
     transaction_logger.info("id=%s, status=%s" %(request_id, reservation_OK))
 
     return reservation_OK
+
+def commit_book_hotel(hotel_name, week_number):
+
+    hotel_reservation_can_be_made = False
+
+    if hotel_name in hotel_data:
+        week_number = int(week_number)
+        if week_number in hotel_data[hotel_name]["free_weeks"]:
+            hotel_data[hotel_name]["free_weeks"].remove(week_number)
+            hotel_data[hotel_name]["reserved_weeks"].append(week_number)
+            hotel_reservation_can_be_made = True
+        else:
+            hotel_reservation_can_be_made = False
+    else:
+        hotel_reservation_can_be_made = False
     
+    return hotel_reservation_can_be_made
+
+def commit_book_flights(departure_flight_number, return_flight_number):
+
+    flights_reservation_can_be_made = False
+
+    if any(flight["flight_number"] == departure_flight_number for flight in flights_data["flights"]) and any(flight["flight_number"] == return_flight_number for flight in flights_data["flights"]):
+        departure_flight = next((flight for flight in flights_data["flights"] if flight["flight_number"] == departure_flight_number), None)
+        return_flight = next((flight for flight in flights_data["flights"] if flight["flight_number"] == return_flight_number), None)
+
+        if int(departure_flight["reserved_seats"]) < int(departure_flight["total_seats"]):
+            departure_flight["reserved_seats"] += 1
+        else:
+            flights_reservation_can_be_made = False
+            return flights_reservation_can_be_made
+
+        if return_flight["reserved_seats"] < return_flight["total_seats"]:
+            return_flight["reserved_seats"] += 1
+        else:
+            flights_reservation_can_be_made = False
+            return flights_reservation_can_be_made
+
+        flights_reservation_can_be_made = True
+        return flights_reservation_can_be_made
+    
+    else:
+        flights_reservation_can_be_made = False
+        return flights_reservation_can_be_made
 
 def book_hotel(hotel_name, week_number):
 
@@ -124,19 +266,10 @@ def book_hotel(hotel_name, week_number):
     
     return hotel_reservation_OK, status_msg
 
-def book_flights(departure_request, return_request):
-    event_logger.info('departure request:')
-    event_logger.info(departure_request)
-    event_logger.info('return request:')
-    event_logger.info(return_request)
+def book_flights(departure_flight_number, return_flight_number):
 
     flights_reservation_OK = False
     status_msg = ''
-
-    departure_flight_number = departure_request.get('flight_number', '')
-    return_flight_number = return_request.get('flight_number', '')
-    event_logger.info("departure flight number: %s" %(departure_flight_number))
-    event_logger.info("return flight number: %s" %(return_flight_number))
 
     if any(flight["flight_number"] == departure_flight_number for flight in flights_data["flights"]) and any(flight["flight_number"] == return_flight_number for flight in flights_data["flights"]):
         departure_flight = next((flight for flight in flights_data["flights"] if flight["flight_number"] == departure_flight_number), None)
@@ -169,9 +302,12 @@ def book_flights(departure_request, return_request):
 
 
 # start server
-validator_server = SimpleXMLRPCServer(('localhost', 8002), logRequests=True)
+hotel_server = SimpleXMLRPCServer(('localhost', 8002), logRequests=True)
 
-validator_server.register_function(handle_request, 'handle_request')
+hotel_server.register_function(handle_request, 'handle_request')
+hotel_server.register_function(prepare_commit, 'prepare_commit')
+hotel_server.register_function(commit, 'commit')
+hotel_server.register_function(abort, 'abort')
 
 event_logger.info("Hotel server is ready to accept requests.")
-validator_server.serve_forever()
+hotel_server.serve_forever()
