@@ -97,6 +97,7 @@ def save_hotel_data():
 # --- end hotel data ---
 
 def prepare_commit(hotel_request, departure_request, return_request, request_id):
+    # STEP 3: flights node checks if it can commit to reservation, updates it's state array and returns boolean value to hotels node
     hotel_name = hotel_request.get('name', '')
     week_number = hotel_request.get('week', '')
     event_logger.info("hotel name: %s" %(hotel_name))
@@ -113,6 +114,7 @@ def prepare_commit(hotel_request, departure_request, return_request, request_id)
     event_logger.info("hotel committed: %s" %(hotel_committed))
     event_logger.info("flights committed: %s" %(flights_committed))
 
+    # TODO should also check that the state array does not have the to be reserved data already in processing state
     if (not(hotel_committed and flights_committed)):
         return False
 
@@ -131,6 +133,7 @@ def commit(hotel_request, departure_request, return_request, request_id):
     event_logger.info("departure flight number: %s" %(departure_flight_number))
     event_logger.info("return flight number: %s" %(return_flight_number))
 
+    # STEP 9: flights node commits to reservation, answer boolean value to hotels node and update it's state array
     hotel_reservation_OK, hotel_status_msg = book_hotel(hotel_name, week_number)
     event_logger.info("hotel reservation status: %s" %(hotel_status_msg))
     flight_reservation_OK, flight_status_msg = book_flights(departure_request, return_request)
@@ -138,7 +141,6 @@ def commit(hotel_request, departure_request, return_request, request_id):
     reservation_OK = hotel_reservation_OK and flight_reservation_OK
 
     if not(reservation_OK):
-        abort(hotel_request, departure_request, return_request, request_id)
         return False
 
     hotel_info = {"name": hotel_name, "week_number": week_number}

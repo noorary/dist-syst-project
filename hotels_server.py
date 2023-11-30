@@ -111,7 +111,8 @@ def prepare_commit(hotel_request, departure_request, return_request, request_id)
     hotel_committed = commit_book_hotel(hotel_name, week_number)
     flights_committed = commit_book_flights(departure_flight_number, return_flight_number)
 
-    if not(hotel_committed and flights_committed and not contains_hotel_week(state_array, hotel_name, week_number)):
+    # TODO should also check that the state array does not have the to be reserved data already in processing state
+    if not(hotel_committed and flights_committed):
         return False
 
     hotel_info = {"name": hotel_name, "week_number": week_number}
@@ -136,7 +137,6 @@ def commit(hotel_request, departure_request, return_request, request_id):
     reservation_OK = hotel_reservation_OK and flight_reservation_OK
 
     if not(reservation_OK):
-        abort(hotel_request, departure_request, return_request, request_id)
         return False
 
     hotel_info = {"name": hotel_name, "week_number": week_number}
@@ -171,32 +171,53 @@ def handle_request(hotel_request, departure_request, return_request, request_id)
     event_logger.info("departure flight number: %s" %(departure_flight_number))
     event_logger.info("return flight number: %s" %(return_flight_number))
 
+    # STEP 2: hotels node sends prepare commit request to flights node
+
     flights_server_prepared  = flights_server.prepare_commit(hotel_request, departure_request, return_request, request_id)
     event_logger.info("flights server prepared: %s" %(flights_server_prepared))
+    
+    # STEP 4: if flights node can't commit, abort reservation in both nodes
+    # and return False to coordinator node
     if not flights_server_prepared:
         abort(hotel_request, departure_request, return_request, request_id)
         flights_server.abort(hotel_request, departure_request, return_request, request_id)
         return False
+    
+    # STEP 5: if flights node committed, hotels node will write processing data to it's state array 
 
     hotel_info = {"name": hotel_name, "week_number": week_number}
     update_state_array(request_id, hotel_info, "processing", state_array)
 
+    # STEP 6: hotels node will try to commit the reservation
     hotel_reservation_OK, hotel_status_msg = book_hotel(hotel_name, week_number)
     event_logger.info("hotel reservation status: %s" %(hotel_status_msg))
     flight_reservation_OK, flight_status_msg = book_flights(departure_request, return_request)
     event_logger.info("flight reservation status: %s" %(flight_status_msg))
     reservation_OK = hotel_reservation_OK and flight_reservation_OK
+    
+    # STEP 7: if hotels node can't commit, abort reservation in both nodes
+    if not(reservation_OK):
+        abort(hotel_request, departure_request, return_request, request_id)
+        flights_server.abort(hotel_request, departure_request, return_request, request_id)
+        return False
 
+    # STEP 8: if hotels node committed, hotels node will ask flights node to also commit
     flights_server_committed = flights_server.commit(hotel_request, departure_request, return_request, request_id)
+    
+    # STEP 10: if flights node can't commit, abort reservation in both nodes
     if not flights_server_committed:
         abort(hotel_request, departure_request, return_request, request_id)
         flights_server.abort(hotel_request, departure_request, return_request, request_id)
         return False
 
+    # STEP 11: if flights node committed, hotels node will write done data to it's state array and return true to coordinator node
     status_msg = hotel_status_msg + " & " + flight_status_msg
     event_logger.info("reservation status: %s" %(status_msg))
 
     transaction_logger.info("id=%s, status=%s" %(request_id, reservation_OK))
+
+    hotel_info = {"name": '', "week_number": ''}
+    update_state_array(request_id, hotel_info, "done", state_array)
 
     return reservation_OK
 

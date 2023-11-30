@@ -64,6 +64,9 @@ def send_booking_request(xml_request):
     flights_server = ServerProxy('http://localhost:8001')
     hotels_server = ServerProxy('http://localhost:8002')
 
+    # STEP 1: coordinator node parses the request and sends it to randomly selected participant node
+    # let's assume that hotels node got selected
+
     # choose used server randomly to mock load balancing between servers for demo purposes
     # servers = [flights_server, hotels_server]
     # chosen_server = random.choice(servers)
