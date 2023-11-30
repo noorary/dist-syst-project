@@ -1,6 +1,7 @@
 from xmlrpc.server import SimpleXMLRPCServer
 from xmlrpc.client import ServerProxy
 from xmlrpc.client import loads
+import random
 
 import xml.etree.ElementTree as ET
 
@@ -13,6 +14,15 @@ def get_request_id(xml_request):
     root = ET.fromstring(xml_request)
     value = root.find(f".//member[name='id']/value")
     return value[0].text
+
+def send_prepare_to_participant(participant, request_id):
+    return participant.prepare_commit(request_id)
+
+def send_commit_to_participant(participant, request_id):
+    return participant.commit(request_id)
+
+def send_abort_to_participant(participant, request_id):
+    return participant.abort(request_id)
 
 
 def parse_xml_request(xml_request, element_name):
@@ -49,17 +59,22 @@ def send_booking_request(xml_request):
     returning_flight = parse_xml_request(xml_request, 'returning_flight')
     hotel = parse_xml_request(xml_request, 'hotel')
 
-    event_logger.info('parsing done, sending requests to servers')
+    event_logger.info('parsing done, sending request to server')
 
     flights_server = ServerProxy('http://localhost:8001')
     hotels_server = ServerProxy('http://localhost:8002')
 
-    flights_result = flights_server.book_flights(request_id, departure_flight, returning_flight)
-    event_logger.info('event=request to flight, response=%s'%(flights_result))
-    hotels_result = hotels_server.book_hotel(request_id, hotel)
-    event_logger.info('event=request to hotel, response=%s'%(hotels_result))
+    # choose used server randomly to mock load balancing between servers for demo purposes
+    # servers = [flights_server, hotels_server]
+    # chosen_server = random.choice(servers)
+    chosen_server = hotels_server
+    event_logger.info('chosen server: %s'%(chosen_server))
+    result = chosen_server.handle_request(hotel, departure_flight, returning_flight, request_id)
 
-    reservation_OK = flights_result and hotels_result
+    event_logger.info('event=request, response=%s'%(result))
+
+    reservation_OK = result
+
     status_msg = "Success" if reservation_OK else "Failure"
     transaction_logger.info("id=%s, status=%s" %(request_id, status_msg))
     return status_msg
