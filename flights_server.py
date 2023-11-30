@@ -6,14 +6,13 @@ import utils.ds_logging as ds_logging
 event_logger = ds_logging.get_event_logger("flightreservation.events")
 transaction_logger = ds_logging.get_transaction_logger("flightreservation")
 
-def book_flights(departure_request, return_request):
+def book_flights(request_id, departure_request, return_request):
 
 
     event_logger.info("flight request data:")
     event_logger.info(departure_request)
     event_logger.info(return_request)
 
-    request_id = "FIX ME"
     reservation_OK = False
     status_msg = "Success" if reservation_OK else "Failure"
     transaction_logger.info("id=%s, status=%s" %(request_id, status_msg))

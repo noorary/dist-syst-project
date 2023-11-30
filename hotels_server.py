@@ -6,12 +6,11 @@ import utils.ds_logging as ds_logging
 event_logger = ds_logging.get_event_logger("hotelreservation.events")
 transaction_logger = ds_logging.get_transaction_logger("hotelreservation")
 
-def book_hotel(xml_hotel_request):
+def book_hotel(request_id, xml_hotel_request):
 
     event_logger.info("hotel request data:")
     event_logger.info(xml_hotel_request)
 
-    request_id = "FIX ME"
     reservation_OK = False
     status_msg = "Success" if reservation_OK else "Failure"
     transaction_logger.info("id=%s, status=%s" %(request_id, status_msg))

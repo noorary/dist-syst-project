@@ -54,9 +54,9 @@ def send_booking_request(xml_request):
     flights_server = ServerProxy('http://localhost:8001')
     hotels_server = ServerProxy('http://localhost:8002')
 
-    flights_result = flights_server.book_flights(departure_flight, returning_flight)
+    flights_result = flights_server.book_flights(request_id, departure_flight, returning_flight)
     event_logger.info('event=request to flight, response=%s'%(flights_result))
-    hotels_result = hotels_server.book_hotel(hotel)
+    hotels_result = hotels_server.book_hotel(request_id, hotel)
     event_logger.info('event=request to hotel, response=%s'%(hotels_result))
 
     reservation_OK = flights_result and hotels_result
