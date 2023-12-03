@@ -2,6 +2,7 @@ from xmlrpc.server import SimpleXMLRPCServer
 from xmlrpc.client import ServerProxy
 from xmlrpc.client import loads
 import random
+import argparse
 
 import xml.etree.ElementTree as ET
 
@@ -78,10 +79,26 @@ def send_booking_request(xml_request):
     status_msg = "Success" if reservation_OK else "Failure"
     transaction_logger.info("id=%s, status=%s" %(request_id, status_msg))
     return status_msg
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="Coordinator server for the booking system")
     
-coordinator_server = SimpleXMLRPCServer(('localhost', 8000), logRequests=True)
+    parser.add_argument("-H", "--host", type=str, default="localhost", help="Host name (default: localhost)")
+    parser.add_argument("-P", "--port", type=int, default=8000, help="Port number (default: 8000)")
+    return parser.parse_args()
 
-coordinator_server.register_function(send_booking_request, 'send_booking_request')
+def main():
+    args = parse_arguments()
+    host = args.host
+    port = args.port
 
-event_logger.info("Coordinator server is ready to accept requests.")
-coordinator_server.serve_forever()
+    coordinator_server = SimpleXMLRPCServer((host, port), logRequests=True)
+
+    coordinator_server.register_function(send_booking_request, 'send_booking_request')
+
+    event_logger.info("Starting server on host: %s, port: %s" %(host, port))
+    event_logger.info("Coordinator server is ready to accept requests.")
+    coordinator_server.serve_forever()
+
+if __name__ == "__main__":
+    main()
