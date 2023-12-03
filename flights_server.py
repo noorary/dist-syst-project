@@ -8,28 +8,51 @@ import utils.ds_logging as ds_logging
 event_logger = ds_logging.get_event_logger("flightreservation.events")
 transaction_logger = ds_logging.get_transaction_logger("flightreservation")
 
-# TODO add flight data to state array and logic for committing flights
 # --- state array ---
+# placeholder just shows the data format
 state_array = [
     {"request_id": "0",
      "status": "placeholder",
-     "hotel": {"name": "Hotel Name Placeholder", "week_number": "1"}}
+     "hotel": {"name": "Hotel Name Placeholder", "week_number": "1"},
+     "flights": {"flight_number": "Flight Number Placeholder", "free_seats_after_reservation": "1"}}
 ]
 
-def update_state_array(request_id, hotel_info, new_state, state_array):
+def update_state_array(request_id, hotel_info, d_flight_info, r_flight_info, new_state, state_array):
     for item in state_array:
         if item['request_id'] == request_id:
             item['state'] = new_state
-            item['hotel'] = hotel_info
+            
+            if hotel_info:
+                item['hotel'] = hotel_info
+            
+            if d_flight_info or r_flight_info:
+                item['flights'] = {"departure": d_flight_info, "return": r_flight_info}
+            
             break
     else:
-        state_array.append({"request_id": request_id, "state": new_state, "hotel": hotel_info})
+        state_array.append({
+            "request_id": request_id,
+            "state": new_state,
+            "hotel": hotel_info if hotel_info else {},
+            "flights": {"departure": d_flight_info, "return": r_flight_info} if d_flight_info or r_flight_info else {}
+        })
 
 def contains_hotel_week(state_array, hotel_name, week_number):
+    # this is important only when state is processing. If it is done or aborted, then the data in file can be assumed to be updated correctly.
     for item in state_array:
         hotel_info = item.get('hotel')
         if hotel_info and hotel_info.get('name') == hotel_name and hotel_info.get('week') == week_number:
-            return True
+            if (item.get('state') == "processing"):
+                return True             
+    return False
+
+def contains_full_flight (state_array, flight_number):
+    # this is important only when state is processing. If it is done or aborted, then the data in file can be assumed to be updated correctly.
+    for item in state_array:
+        flight_info = item.get('flights')
+        if flight_info and flight_info.get('flight_number') == flight_number and flight_info.get('free_seats_after_reservation') <= 0:
+            if (item.get('state') == "processing"):
+                return True
     return False
 
 # --- flight data ---
@@ -108,51 +131,58 @@ def prepare_commit(hotel_request, departure_request, return_request, request_id)
     event_logger.info("departure flight number: %s" %(departure_flight_number))
     event_logger.info("return flight number: %s" %(return_flight_number))
 
-    hotel_committed = commit_book_hotel(hotel_name, week_number)
-    flights_committed = commit_book_flights(departure_flight_number, return_flight_number)
+    hotel_committed = commit_book_hotel(hotel_name, week_number, request_id)
+    flights_committed = commit_book_flights(departure_flight_number, return_flight_number, request_id)
 
     event_logger.info("hotel committed: %s" %(hotel_committed))
     event_logger.info("flights committed: %s" %(flights_committed))
 
-    # TODO should also check that the state array does not have the to be reserved data already in processing state
     if (not(hotel_committed and flights_committed)):
+        return False
+    
+    if (contains_hotel_week(state_array, hotel_name, week_number)):
+        return False
+    
+    if (contains_full_flight(state_array, departure_flight_number) or contains_full_flight(state_array, return_flight_number)):
         return False
 
     hotel_info = {"name": hotel_name, "week_number": week_number}
-    update_state_array(request_id, hotel_info, "processing", state_array)
+    d_free_seats = next((flight["total_seats"] - flight["reserved_seats"] for flight in flights_data["flights"] if flight["flight_number"] == departure_flight_number), None)
+    d_flight_info = {"flight_number": departure_flight_number, "free_seats_after_reservation": d_free_seats - 1}
+    r_free_seats = next((flight["total_seats"] - flight["reserved_seats"] for flight in flights_data["flights"] if flight["flight_number"] == return_flight_number), None)
+    r_flight_info = {"flight_number": return_flight_number, "free_seats_after_reservation": r_free_seats - 1}
+    update_state_array(request_id, hotel_info, d_flight_info, r_flight_info, "processing", state_array)
     return True
 
 def commit(hotel_request, departure_request, return_request, request_id):
     hotel_name = hotel_request.get('name', '')
     week_number = hotel_request.get('week', '')
-    event_logger.info("hotel name: %s" %(hotel_name))
-    event_logger.info("week number: %s" %(week_number))
+    event_logger.info("(commit) hotel name: %s" %(hotel_name))
+    event_logger.info("(commit) week number: %s" %(week_number))
 
     departure_flight_number = departure_request.get('flight_number', '')
     return_flight_number = return_request.get('flight_number', '')
-    event_logger.info("departure flight number: %s" %(departure_flight_number))
-    event_logger.info("return flight number: %s" %(return_flight_number))
+    event_logger.info("(commit) departure flight number: %s" %(departure_flight_number))
+    event_logger.info("(commit) return flight number: %s" %(return_flight_number))
 
     # STEP 9: flights node commits to reservation, answer boolean value to hotels node and update it's state array
     hotel_reservation_OK, hotel_status_msg = book_hotel(hotel_name, week_number)
     event_logger.info("hotel reservation status: %s" %(hotel_status_msg))
-    flight_reservation_OK, flight_status_msg = book_flights(departure_request, return_request)
+    flight_reservation_OK, flight_status_msg = book_flights(departure_flight_number, return_flight_number)
     event_logger.info("flight reservation status: %s" %(flight_status_msg))
     reservation_OK = hotel_reservation_OK and flight_reservation_OK
 
     if not(reservation_OK):
         return False
 
-    hotel_info = {"name": hotel_name, "week_number": week_number}
-    update_state_array(request_id, hotel_info, "done", state_array)
+    update_state_array(request_id, None, None, None, "done", state_array)
     return True
 
 def abort(hotel_request, departure_request, return_request, request_id):
-    # should remove reservations from file if it was already updated
     cancel_hotel(hotel_request)
     cancel_flights(departure_request, return_request)
-    hotel_info = {"name": '', "week_number": ''}
-    update_state_array(request_id, hotel_info, "aborted", state_array)
+
+    update_state_array(request_id, None, None, None, "aborted", state_array)
     return True
 
 def handle_request(hotel_request, departure_request, return_request, request_id):
@@ -183,18 +213,29 @@ def handle_request(hotel_request, departure_request, return_request, request_id)
         return False
     
     hotel_info = {"name": hotel_name, "week_number": week_number}
-    update_state_array(request_id, hotel_info, "processing", state_array)
+    d_free_seats = next((flight["total_seats"] - flight["reserved_seats"] for flight in flights_data["flights"] if flight["flight_number"] == departure_flight_number), None)
+    d_flight_info = {"flight_number": departure_flight_number, "free_seats_after_reservation": d_free_seats - 1}
+    r_free_seats = next((flight["total_seats"] - flight["reserved_seats"] for flight in flights_data["flights"] if flight["flight_number"] == return_flight_number), None)
+    r_flight_info = {"flight_number": return_flight_number, "free_seats_after_reservation": r_free_seats - 1}
+    update_state_array(request_id, hotel_info, d_flight_info, r_flight_info, "processing", state_array)
 
     hotel_reservation_OK, hotel_status_msg = book_hotel(hotel_name, week_number)
     event_logger.info("hotel reservation status: %s" %(hotel_status_msg))
-    flight_reservation_OK, flight_status_msg = book_flights(departure_request, return_request)
+    flight_reservation_OK, flight_status_msg = book_flights(departure_flight_number, return_flight_number)
     event_logger.info("flight reservation status: %s" %(flight_status_msg))
     reservation_OK = hotel_reservation_OK and flight_reservation_OK
+
+    if not(reservation_OK):
+        abort(hotel_request, departure_request, return_request, request_id)
+        hotels_server.abort(hotel_request, departure_request, return_request, request_id)
+        update_state_array(request_id, None, None, None, "aborted", state_array)
+        return False
 
     hotels_server_committed = hotels_server.commit(hotel_request, departure_request, return_request, request_id)
     if not hotels_server_committed:
         abort(hotel_request, departure_request, return_request, request_id)
         hotels_server.abort(hotel_request, departure_request, return_request, request_id)
+        update_state_array(request_id, None, None, None, "aborted", state_array)
         return False
     
     status_msg = hotel_status_msg + " & " + flight_status_msg
@@ -202,46 +243,62 @@ def handle_request(hotel_request, departure_request, return_request, request_id)
 
     transaction_logger.info("id=%s, status=%s" %(request_id, reservation_OK))
 
+    update_state_array(request_id, None, None, None, "done", state_array)
     return reservation_OK
 
-def commit_book_hotel(hotel_name, week_number):
+def commit_book_hotel(hotel_name, week_number, request_id):
 
     hotel_reservation_can_be_made = False
 
     if hotel_name in hotel_data:
         week_number = int(week_number)
+
         if week_number in hotel_data[hotel_name]["free_weeks"]:
-            hotel_data[hotel_name]["free_weeks"].remove(week_number)
-            hotel_data[hotel_name]["reserved_weeks"].append(week_number)
+            hotel_info = {"name": hotel_name, "week_number": week_number}
+            update_state_array(request_id, hotel_info, None, None, "processing", state_array)
+
             hotel_reservation_can_be_made = True
         else:
             hotel_reservation_can_be_made = False
+        
     else:
         hotel_reservation_can_be_made = False
     
     return hotel_reservation_can_be_made
 
-def commit_book_flights(departure_flight_number, return_flight_number):
+def commit_book_flights(departure_flight_number, return_flight_number, request_id):
 
     flights_reservation_can_be_made = False
-
+    event_logger.info("departure flight number: %s" %(departure_flight_number))
+    event_logger.info("return flight number: %s" %(return_flight_number))
+    
     if any(flight["flight_number"] == departure_flight_number for flight in flights_data["flights"]) and any(flight["flight_number"] == return_flight_number for flight in flights_data["flights"]):
         departure_flight = next((flight for flight in flights_data["flights"] if flight["flight_number"] == departure_flight_number), None)
         return_flight = next((flight for flight in flights_data["flights"] if flight["flight_number"] == return_flight_number), None)
 
+        event_logger.info("departure flight", departure_flight)
+        event_logger.info("return flight", return_flight)
+
         if int(departure_flight["reserved_seats"]) < int(departure_flight["total_seats"]):
-            departure_flight["reserved_seats"] += 1
+            flights_reservation_can_be_made = True
         else:
             flights_reservation_can_be_made = False
             return flights_reservation_can_be_made
 
         if return_flight["reserved_seats"] < return_flight["total_seats"]:
-            return_flight["reserved_seats"] += 1
+            flights_reservation_can_be_made = True
         else:
             flights_reservation_can_be_made = False
             return flights_reservation_can_be_made
 
         flights_reservation_can_be_made = True
+
+        d_free_seats = next((flight["total_seats"] - flight["reserved_seats"] for flight in flights_data["flights"] if flight["flight_number"] == departure_flight_number), None)
+        d_flight_info = {"flight_number": departure_flight_number, "free_seats_after_reservation": d_free_seats - 1}
+        r_free_seats = next((flight["total_seats"] - flight["reserved_seats"] for flight in flights_data["flights"] if flight["flight_number"] == return_flight_number), None)
+        r_flight_info = {"flight_number": return_flight_number, "free_seats_after_reservation": r_free_seats - 1}
+        update_state_array(request_id, None, d_flight_info, r_flight_info, "processing", state_array)
+        
         return flights_reservation_can_be_made
     
     else:
@@ -274,8 +331,10 @@ def cancel_hotel(hotel_request):
     hotel_name = hotel_request.get("name", "")
     week_number = hotel_request.get("week", "")
             
-    hotel_data[hotel_name]["free_weeks"].append(week_number)
-    hotel_data[hotel_name]["reserved_weeks"].remove(week_number)
+    hotel_data[hotel_name]["free_weeks"].append(int(week_number))
+    
+    if week_number in hotel_data[hotel_name]["reserved_weeks"]:
+        hotel_data[hotel_name]["reserved_weeks"].remove(week_number)
     save_hotel_data()
 
 
@@ -287,6 +346,9 @@ def book_flights(departure_flight_number, return_flight_number):
     if any(flight["flight_number"] == departure_flight_number for flight in flights_data["flights"]) and any(flight["flight_number"] == return_flight_number for flight in flights_data["flights"]):
         departure_flight = next((flight for flight in flights_data["flights"] if flight["flight_number"] == departure_flight_number), None)
         return_flight = next((flight for flight in flights_data["flights"] if flight["flight_number"] == return_flight_number), None)
+
+        event_logger.info("departure flight: %s" %(departure_flight))
+        event_logger.info("return flight: %s" %(return_flight))
 
         if int(departure_flight["reserved_seats"]) < int(departure_flight["total_seats"]):
             departure_flight["reserved_seats"] += 1

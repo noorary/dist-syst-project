@@ -71,7 +71,7 @@ def send_booking_request(xml_request):
     # choose used server randomly to mock load balancing between servers for demo purposes
     # servers = [flights_server, hotels_server]
     # chosen_server = random.choice(servers)
-    chosen_server = hotels_server
+    chosen_server = flights_server
     event_logger.info('chosen server: %s'%(chosen_server))
     result = chosen_server.handle_request(hotel, departure_flight, returning_flight, request_id)
 
