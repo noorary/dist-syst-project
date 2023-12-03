@@ -3,8 +3,6 @@ from xmlrpc.client import ServerProxy, loads
 import json
 import os
 
-import xml.etree.ElementTree as ET
-
 import utils.ds_logging as ds_logging
 
 event_logger = ds_logging.get_event_logger("hotelreservation.events")
@@ -145,10 +143,11 @@ def commit(hotel_request, departure_request, return_request, request_id):
 
 def abort(hotel_request, departure_request, return_request, request_id):
     # TODO should remove reservations from file if it was already updated
+    cancel_hotel(hotel_request)
+    cancel_flights(departure_request, return_request)
     hotel_info = {"name": '', "week_number": ''}
     update_state_array(request_id, hotel_info, "aborted", state_array)
     return True
-
 
 def handle_request(hotel_request, departure_request, return_request, request_id):
     
@@ -287,6 +286,14 @@ def book_hotel(hotel_name, week_number):
     
     return hotel_reservation_OK, status_msg
 
+def cancel_hotel(hotel_request):
+    hotel_name = hotel_request.get("name", "")
+    week_number = hotel_request.get("week", "")
+            
+    hotel_data[hotel_name]["free_weeks"].append(week_number)
+    hotel_data[hotel_name]["reserved_weeks"].remove(week_number)
+    save_hotel_data()
+
 def book_flights(departure_flight_number, return_flight_number):
 
     flights_reservation_OK = False
@@ -320,6 +327,17 @@ def book_flights(departure_flight_number, return_flight_number):
         status_msg = "Failure: flight does not exist"
         flights_reservation_OK = False
         return flights_reservation_OK, status_msg
+
+def cancel_flights(departure_request, return_request):
+    departure_flight_number = departure_request.get("flight_number", "")
+    return_flight_number = return_request.get("flight_number", "")
+
+    departure_flight = next((flight for flight in flights_data["flights"] if flight["flight_number"] == departure_flight_number), None)
+    return_flight = next((flight for flight in flights_data["flights"] if flight["flight_number"] == return_flight_number), None)
+
+    departure_flight["reserved_seats"] -= 1
+    return_flight["reserved_seats"] -= 1
+    save_flight_data()
 
 
 # start server
