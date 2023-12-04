@@ -1,1 +1,25 @@
-{"flights": [{"flight_number": "ABC123", "company": "Airline A", "date": "2023-12-01", "total_seats": 100, "reserved_seats": 23}, {"flight_number": "XYZ789", "company": "Airline B", "date": "2023-12-05", "total_seats": 120, "reserved_seats": 120}, {"flight_number": "123XYZ", "company": "Airline C", "date": "2023-12-10", "total_seats": 80, "reserved_seats": 7}]}
+{
+  "flights": [
+    {
+      "flight_number": "ABC123",
+      "company": "Airline A",
+      "date": "2023-12-01",
+      "total_seats": 100,
+      "reserved_seats": 0
+    },
+    {
+      "flight_number": "XYZ789",
+      "company": "Airline B",
+      "date": "2023-12-05",
+      "total_seats": 120,
+      "reserved_seats": 120
+    },
+    {
+      "flight_number": "123XYZ",
+      "company": "Airline C",
+      "date": "2023-12-10",
+      "total_seats": 80,
+      "reserved_seats": 10
+    }
+  ]
+}

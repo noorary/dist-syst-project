@@ -334,7 +334,7 @@ def cancel_hotel(hotel_request):
     hotel_data[hotel_name]["free_weeks"].append(int(week_number))
     
     if week_number in hotel_data[hotel_name]["reserved_weeks"]:
-        hotel_data[hotel_name]["reserved_weeks"].remove(week_number)
+        hotel_data[hotel_name]["reserved_weeks"].remove(int(week_number))
     save_hotel_data()
 
 
