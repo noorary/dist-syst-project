@@ -3,6 +3,7 @@ from xmlrpc.client import ServerProxy
 from xmlrpc.client import loads
 import random
 import argparse
+import time
 
 import xml.etree.ElementTree as ET
 
@@ -69,23 +70,49 @@ def send_booking_request(xml_request):
     # let's assume that hotels node got selected
 
     # choose used server randomly to mock load balancing between servers for demo purposes
-    # servers = [flights_server, hotels_server]
+    servers = [flights_server, hotels_server]
     # chosen_server = random.choice(servers)
+
     chosen_server = flights_server
     event_logger.info('chosen server: %s'%(chosen_server))
-    result = chosen_server.handle_request(hotel, departure_flight, returning_flight, request_id)
+    #result = chosen_server.handle_request(hotel, departure_flight, returning_flight, request_id)
+    #event_logger.info('event=request, response=%s'%(result))
 
-    event_logger.info('event=request, response=%s'%(result))
+    #timer for waiting response
+    start_time = time.time()
+    while True:
+        result = chosen_server.handle_request(hotel, departure_flight, returning_flight, request_id)
+        event_logger.info('event=request, response=%s'%(result))
 
-    reservation_OK = result
+        #if return is false or time out, stop waiting and continue
+        if not result or start_time == 90:
+            #Try another server
+            for node in servers:
+                if node != chosen_server:
+                    start_time2 = time.time()
+                    while True:
+                        result2 = node.handle_request(hotel, departure_flight, returning_flight, request_id)
+                        event_logger.info('event=request, response=%s'%(result))
+                        if not result2 or start_time2 == 90:
+                            status_msg = "Failure"
+                            return False
+                        else:
+                            status_msg = "Success"
+                            break
+        #if response returned true, break out of the loop and continue
+        else:
+            status_msg = "Success"
+            break
 
-    status_msg = "Success" if reservation_OK else "Failure"
+    #reservation_OK = result
+    #status_msg = "Success" if reservation_OK else "Failure"
     transaction_logger.info("id=%s, status=%s" %(request_id, status_msg))
     return status_msg
 
+
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Coordinator server for the booking system")
-    
+
     parser.add_argument("-H", "--host", type=str, default="localhost", help="Host name (default: localhost)")
     parser.add_argument("-P", "--port", type=int, default=8000, help="Port number (default: 8000)")
     return parser.parse_args()

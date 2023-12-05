@@ -2,6 +2,7 @@ from xmlrpc.server import SimpleXMLRPCServer
 from xmlrpc.client import ServerProxy, loads
 import json
 import os
+import time
 
 import utils.ds_logging as ds_logging
 
@@ -206,12 +207,27 @@ def handle_request(hotel_request, departure_request, return_request, request_id)
     event_logger.info("departure flight number: %s" %(departure_flight_number))
     event_logger.info("return flight number: %s" %(return_flight_number))
 
-    hotels_server_prepared = hotels_server.prepare_commit(hotel_request, departure_request, return_request, request_id)
-    if not hotels_server_prepared:
-        abort(hotel_request, departure_request, return_request, request_id)
-        hotels_server.abort(hotel_request, departure_request, return_request, request_id)
-        return False
-    
+    #timer for waiting response
+    start_time = time.time()
+    while True:
+        hotels_server_prepared = hotels_server.prepare_commit(hotel_request, departure_request, return_request, request_id)
+
+        #if return is false or time out, stop waiting and continue
+        if not hotels_server_prepared or start_time == 90:
+            abort(hotel_request, departure_request, return_request, request_id)
+            hotels_server.abort(hotel_request, departure_request, return_request, request_id)
+            return False
+        #if response returned true, break out of the loop and continue
+        elif hotels_server_prepared:
+            break
+
+    #hotels_server_prepared = hotels_server.prepare_commit(hotel_request, departure_request, return_request, request_id)
+
+    #if not hotels_server_prepared:
+    #    abort(hotel_request, departure_request, return_request, request_id)
+    #    hotels_server.abort(hotel_request, departure_request, return_request, request_id)
+    #    return False
+
     hotel_info = {"name": hotel_name, "week_number": week_number}
     d_free_seats = next((flight["total_seats"] - flight["reserved_seats"] for flight in flights_data["flights"] if flight["flight_number"] == departure_flight_number), None)
     d_flight_info = {"flight_number": departure_flight_number, "free_seats_after_reservation": d_free_seats - 1}

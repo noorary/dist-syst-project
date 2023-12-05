@@ -2,7 +2,7 @@ from xmlrpc.server import SimpleXMLRPCServer
 from xmlrpc.client import ServerProxy, loads
 import json
 import os
-
+import time
 import utils.ds_logging as ds_logging
 
 event_logger = ds_logging.get_event_logger("hotelreservation.events")
@@ -206,17 +206,34 @@ def handle_request(hotel_request, departure_request, return_request, request_id)
     event_logger.info("return flight number: %s" %(return_flight_number))
 
     # STEP 2: hotels node sends prepare commit request to flights node
+    #flights_server_prepared  = flights_server.prepare_commit(hotel_request, departure_request, return_request, request_id)
+    #event_logger.info("flights server prepared: %s" %(flights_server_prepared))
 
-    flights_server_prepared  = flights_server.prepare_commit(hotel_request, departure_request, return_request, request_id)
-    event_logger.info("flights server prepared: %s" %(flights_server_prepared))
-    
-    # STEP 4: if flights node can't commit, abort reservation in both nodes
+    #timer for waiting response
+    start_time = time.time()
+    while True:
+        flights_server_prepared  = flights_server.prepare_commit(hotel_request, departure_request, return_request, request_id)
+        event_logger.info("flights server prepared: %s" %(flights_server_prepared))
+
+        #if return is false or time out, stop waiting and continue
+        # STEP 4: if flights node can't prepare commit, abort reservation in both nodes
+        # and return False to coordinator node
+        if not flights_server_prepared or start_time == 90:
+            abort(hotel_request, departure_request, return_request, request_id)
+            flights_server.abort(hotel_request, departure_request, return_request, request_id)
+            return False
+        #if response returned true, break out of the loop and continue
+        elif flights_server_prepared:
+            break
+
+
+    # STEP 4: if flights node can't prepare commit, abort reservation in both nodes
     # and return False to coordinator node
-    if not flights_server_prepared:
-        abort(hotel_request, departure_request, return_request, request_id)
-        flights_server.abort(hotel_request, departure_request, return_request, request_id)
-        return False
-    
+    #if not flights_server_prepared:
+    #    abort(hotel_request, departure_request, return_request, request_id)
+    #    flights_server.abort(hotel_request, departure_request, return_request, request_id)
+    #    return False
+
     # STEP 5: if flights node committed, hotels node will write processing data to it's state array 
 
     hotel_info = {"name": hotel_name, "week_number": week_number}
