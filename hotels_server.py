@@ -3,6 +3,9 @@ from xmlrpc.client import ServerProxy, loads
 import json
 import os
 import time
+import socket
+import argparse
+
 import utils.ds_logging as ds_logging
 
 event_logger = ds_logging.get_event_logger("hotelreservation.events")
@@ -409,14 +412,51 @@ def cancel_flights(departure_request, return_request):
     return_flight["reserved_seats"] -= 1
     save_flight_data()
 
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="Hotel booking server for The Booking System")
 
-# start server
-hotel_server = SimpleXMLRPCServer(('localhost', 8002), logRequests=True)
+    parser.add_argument("-H", "--host", type=str, default="localhost", help="Host name (default: localhost)")
+    parser.add_argument("-P", "--port", type=int, default=8002, help="Port number (default: 8002)")
+    return parser.parse_args()
 
-hotel_server.register_function(handle_request, 'handle_request')
-hotel_server.register_function(prepare_commit, 'prepare_commit')
-hotel_server.register_function(commit, 'commit')
-hotel_server.register_function(abort, 'abort')
 
-event_logger.info("Hotel server is ready to accept requests.")
-hotel_server.serve_forever()
+def announce_presence(host, port):
+    UDP_IP = "255.255.255.255"
+    UDP_PORT = 12345
+    
+    client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+
+    keep_trying = True 
+
+    while keep_trying:
+        message = "Hotel booking server running. host=%s, port=%s" %(host, port)
+        event_logger.info(message)
+        client_socket.sendto(message.encode(), (UDP_IP, UDP_PORT))
+        acknowledgment, server_address = client_socket.recvfrom(1024)
+        if acknowledgment.decode() == "OK":
+            keep_trying = False 
+        event_logger.info("Sleep - Announce presence every 5 seconds")
+        time.sleep(5)  # Announce presence every 5 seconds
+
+
+def main():
+    # start server
+    args = parse_arguments()
+    host = args.host
+    port = args.port    
+
+    announce_presence(host, port)
+
+    hotel_server = SimpleXMLRPCServer((host, port), logRequests=True)
+
+    hotel_server.register_function(handle_request, 'handle_request')
+    hotel_server.register_function(prepare_commit, 'prepare_commit')
+    hotel_server.register_function(commit, 'commit')
+    hotel_server.register_function(abort, 'abort')
+
+    event_logger.info("Hotel server is ready to accept requests.")
+    hotel_server.serve_forever()
+
+if __name__ == "__main__":
+    main()
