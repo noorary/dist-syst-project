@@ -227,9 +227,13 @@ def handle_request(hotel_request, departure_request, return_request, request_id)
             abort(hotel_request, departure_request, return_request, request_id)
             flights_server.abort(hotel_request, departure_request, return_request, request_id) if flight_server_is_alive else None
             return False
-    except Exception as e:
+    except ConnectionRefusedError as ce:
         event_logger.info("flights server is not responding, continuing without it")
         flight_server_is_alive = False
+    except Exception as e:
+        event_logger.info("error:", e)
+        flight_server_is_alive = False
+        return False
 
     # STEP 5: if flights node committed, hotels node will write processing data to it's state array 
 

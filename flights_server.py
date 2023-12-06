@@ -220,11 +220,13 @@ def handle_request(hotel_request, departure_request, return_request, request_id)
             abort(hotel_request, departure_request, return_request, request_id)
             hotels_server.abort(hotel_request, departure_request, return_request, request_id) if hotels_server_is_alive else None
             return False
-    except Exception as e:
+    except ConnectionRefusedError as ce:
         event_logger.info("hotels server is not responding, continue without it")
         hotels_server_is_alive = False
-
-
+    except Exception as e:
+        event_logger.info("error:", e)
+        hotels_server_is_alive = False
+        return False
 
     hotel_info = {"name": hotel_name, "week_number": week_number}
     d_free_seats = next((flight["total_seats"] - flight["reserved_seats"] for flight in flights_data["flights"] if flight["flight_number"] == departure_flight_number), None)
