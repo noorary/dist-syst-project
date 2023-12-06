@@ -191,6 +191,7 @@ def abort(hotel_request, departure_request, return_request, request_id):
 def handle_request(hotel_request, departure_request, return_request, request_id):
 
     hotels_server = ServerProxy('http://localhost:8002')
+    hotels_server_is_alive = True
 
     event_logger.info("hotel request data:")
     event_logger.info(hotel_request)
@@ -209,26 +210,21 @@ def handle_request(hotel_request, departure_request, return_request, request_id)
     event_logger.info("departure flight number: %s" %(departure_flight_number))
     event_logger.info("return flight number: %s" %(return_flight_number))
 
-    #timer for waiting response
-    start_time = time.time()
-    while True:
+    hotels_server_prepared = False
+
+    try:
+        socket.setdefaulttimeout(30)
         hotels_server_prepared = hotels_server.prepare_commit(hotel_request, departure_request, return_request, request_id)
-
-        #if return is false or time out, stop waiting and continue
-        if not hotels_server_prepared or start_time == 90:
+        event_logger.info("hotels_server_prepared: %s" %(hotels_server_prepared))
+        if not hotels_server_prepared:
             abort(hotel_request, departure_request, return_request, request_id)
-            hotels_server.abort(hotel_request, departure_request, return_request, request_id)
+            hotels_server.abort(hotel_request, departure_request, return_request, request_id) if hotels_server_is_alive else None
             return False
-        #if response returned true, break out of the loop and continue
-        elif hotels_server_prepared:
-            break
+    except Exception as e:
+        event_logger.info("hotels server is not responding, continue without it")
+        hotels_server_is_alive = False
 
-    #hotels_server_prepared = hotels_server.prepare_commit(hotel_request, departure_request, return_request, request_id)
 
-    #if not hotels_server_prepared:
-    #    abort(hotel_request, departure_request, return_request, request_id)
-    #    hotels_server.abort(hotel_request, departure_request, return_request, request_id)
-    #    return False
 
     hotel_info = {"name": hotel_name, "week_number": week_number}
     d_free_seats = next((flight["total_seats"] - flight["reserved_seats"] for flight in flights_data["flights"] if flight["flight_number"] == departure_flight_number), None)
@@ -245,16 +241,17 @@ def handle_request(hotel_request, departure_request, return_request, request_id)
 
     if not(reservation_OK):
         abort(hotel_request, departure_request, return_request, request_id)
-        hotels_server.abort(hotel_request, departure_request, return_request, request_id)
+        hotels_server.abort(hotel_request, departure_request, return_request, request_id) if hotels_server_is_alive else None
         update_state_array(request_id, None, None, None, "aborted", state_array)
         return False
 
-    hotels_server_committed = hotels_server.commit(hotel_request, departure_request, return_request, request_id)
-    if not hotels_server_committed:
-        abort(hotel_request, departure_request, return_request, request_id)
-        hotels_server.abort(hotel_request, departure_request, return_request, request_id)
-        update_state_array(request_id, None, None, None, "aborted", state_array)
-        return False
+    if (hotels_server_is_alive):
+        hotels_server_committed = hotels_server.commit(hotel_request, departure_request, return_request, request_id)
+        if not hotels_server_committed:
+            abort(hotel_request, departure_request, return_request, request_id)
+            hotels_server.abort(hotel_request, departure_request, return_request, request_id)
+            update_state_array(request_id, None, None, None, "aborted", state_array)
+            return False
     
     status_msg = hotel_status_msg + " & " + flight_status_msg
     event_logger.info("reservation status: %s" %(status_msg))
