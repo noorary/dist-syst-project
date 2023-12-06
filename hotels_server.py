@@ -434,10 +434,16 @@ def announce_presence(host, port):
         event_logger.info(message)
         client_socket.sendto(message.encode(), (UDP_IP, UDP_PORT))
         acknowledgment, server_address = client_socket.recvfrom(1024)
-        if acknowledgment.decode() == "OK":
-            keep_trying = False 
+        if acknowledgment.decode().startswith("OK"):
+            break
         event_logger.info("Sleep - Announce presence every 5 seconds")
         time.sleep(5)  # Announce presence every 5 seconds
+
+    _, nodes = acknowledgment.decode().split(":")
+    messages = nodes.split(";")
+    for msg in messages:
+        event_logger.info("Reservation node connected: %s" %(msg))
+    
 
 
 def main():

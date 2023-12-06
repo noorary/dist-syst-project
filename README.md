@@ -4,6 +4,10 @@
 
 ## First version can be run as follows
 
+
+**NOTE** It is critical to start coordinator server first. Otherwise node discovery do not work
+--- 
+
 1. run `python3 coordinator_server.py`
 2. run `python3 flights_server.py`
 3. run `python3 hotels_server.py`

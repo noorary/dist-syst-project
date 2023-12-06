@@ -135,7 +135,8 @@ def discover_nodes():
             if  len(hosts) < 2:
                 acknowledgment_message = "Keep waiting for another node"
             else:
-                acknowledgment_message = "OK"
+                node_messages = ";".join(hosts.values())
+                acknowledgment_message = "OK: " + node_messages
                 for ip in hosts.keys():
                     server_socket.sendto(acknowledgment_message.encode(), ip)
         except socket.timeout:
