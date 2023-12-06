@@ -41,7 +41,6 @@ def get_request_data(user_input):
 
 def send_request(proxy_url, xml_request):
     logger = ds_logging.get_event_logger("client")
-    logger.info("Starting server on URL: %s" %(proxy_url))
     coordinator_server = ServerProxy(proxy_url)
 
     result = coordinator_server.send_booking_request(xml_request)
