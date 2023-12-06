@@ -3,6 +3,8 @@ from xmlrpc.client import ServerProxy
 from xmlrpc.client import loads
 import random
 import argparse
+import time
+import socket
 
 import xml.etree.ElementTree as ET
 
@@ -69,31 +71,85 @@ def send_booking_request(xml_request):
     # let's assume that hotels node got selected
 
     # choose used server randomly to mock load balancing between servers for demo purposes
-    # servers = [flights_server, hotels_server]
+    servers = [flights_server, hotels_server]
     # chosen_server = random.choice(servers)
+
     chosen_server = flights_server
     event_logger.info('chosen server: %s'%(chosen_server))
-    result = chosen_server.handle_request(hotel, departure_flight, returning_flight, request_id)
+    #result = chosen_server.handle_request(hotel, departure_flight, returning_flight, request_id)
+    #event_logger.info('event=request, response=%s'%(result))
 
-    event_logger.info('event=request, response=%s'%(result))
+    #timer for waiting response
+    start_time = time.time()
+    while True:
+        result = chosen_server.handle_request(hotel, departure_flight, returning_flight, request_id)
+        event_logger.info('event=request, response=%s'%(result))
 
-    reservation_OK = result
+        #if return is false or time out, stop waiting and continue
+        if not result or start_time == 90:
+            #Try another server
+            for node in servers:
+                if node != chosen_server:
+                    start_time2 = time.time()
+                    while True:
+                        result2 = node.handle_request(hotel, departure_flight, returning_flight, request_id)
+                        event_logger.info('event=request, response=%s'%(result))
+                        if not result2 or start_time2 == 90:
+                            status_msg = "Failure"
+                            return False
+                        else:
+                            status_msg = "Success"
+                            break
+        #if response returned true, break out of the loop and continue
+        else:
+            status_msg = "Success"
+            break
 
-    status_msg = "Success" if reservation_OK else "Failure"
+    #reservation_OK = result
+    #status_msg = "Success" if reservation_OK else "Failure"
     transaction_logger.info("id=%s, status=%s" %(request_id, status_msg))
     return status_msg
 
+
 def parse_arguments():
-    parser = argparse.ArgumentParser(description="Coordinator server for the booking system")
-    
+    parser = argparse.ArgumentParser(description="Coordinator server for The Booking System")
+
     parser.add_argument("-H", "--host", type=str, default="localhost", help="Host name (default: localhost)")
     parser.add_argument("-P", "--port", type=int, default=8000, help="Port number (default: 8000)")
     return parser.parse_args()
+
+def discover_nodes():
+    UDP_IP = "255.255.255.255"
+    UDP_PORT = 12345
+    event_logger.info("Reservation node discovery started")
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server_socket.bind(("", UDP_PORT))
+    server_socket.settimeout(5)
+    hosts = {}
+    while len(hosts) < 2:
+        try:
+            data, addr = server_socket.recvfrom(1024)
+            event_logger.info(f"Received message from {addr}: {data.decode()}")
+            hosts[addr] = data.decode()
+            if  len(hosts) < 2:
+                acknowledgment_message = "Keep waiting for another node"
+            else:
+                node_messages = ";".join(hosts.values())
+                acknowledgment_message = "OK: " + node_messages
+                for ip in hosts.keys():
+                    server_socket.sendto(acknowledgment_message.encode(), ip)
+        except socket.timeout:
+            pass
+
+
 
 def main():
     args = parse_arguments()
     host = args.host
     port = args.port
+
+    discover_nodes()
 
     coordinator_server = SimpleXMLRPCServer((host, port), logRequests=True)
 

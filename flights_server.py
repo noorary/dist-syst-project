@@ -2,6 +2,9 @@ from xmlrpc.server import SimpleXMLRPCServer
 from xmlrpc.client import ServerProxy, loads
 import json
 import os
+import time
+import socket
+import argparse
 
 import utils.ds_logging as ds_logging
 
@@ -206,12 +209,27 @@ def handle_request(hotel_request, departure_request, return_request, request_id)
     event_logger.info("departure flight number: %s" %(departure_flight_number))
     event_logger.info("return flight number: %s" %(return_flight_number))
 
-    hotels_server_prepared = hotels_server.prepare_commit(hotel_request, departure_request, return_request, request_id)
-    if not hotels_server_prepared:
-        abort(hotel_request, departure_request, return_request, request_id)
-        hotels_server.abort(hotel_request, departure_request, return_request, request_id)
-        return False
-    
+    #timer for waiting response
+    start_time = time.time()
+    while True:
+        hotels_server_prepared = hotels_server.prepare_commit(hotel_request, departure_request, return_request, request_id)
+
+        #if return is false or time out, stop waiting and continue
+        if not hotels_server_prepared or start_time == 90:
+            abort(hotel_request, departure_request, return_request, request_id)
+            hotels_server.abort(hotel_request, departure_request, return_request, request_id)
+            return False
+        #if response returned true, break out of the loop and continue
+        elif hotels_server_prepared:
+            break
+
+    #hotels_server_prepared = hotels_server.prepare_commit(hotel_request, departure_request, return_request, request_id)
+
+    #if not hotels_server_prepared:
+    #    abort(hotel_request, departure_request, return_request, request_id)
+    #    hotels_server.abort(hotel_request, departure_request, return_request, request_id)
+    #    return False
+
     hotel_info = {"name": hotel_name, "week_number": week_number}
     d_free_seats = next((flight["total_seats"] - flight["reserved_seats"] for flight in flights_data["flights"] if flight["flight_number"] == departure_flight_number), None)
     d_flight_info = {"flight_number": departure_flight_number, "free_seats_after_reservation": d_free_seats - 1}
@@ -386,15 +404,57 @@ def cancel_flights(departure_request, return_request):
     return_flight["reserved_seats"] -= 1
     save_flight_data()
 
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="Flight booking server for The Booking System")
 
+    parser.add_argument("-H", "--host", type=str, default="localhost", help="Host name (default: localhost)")
+    parser.add_argument("-P", "--port", type=int, default=8001, help="Port number (default: 8002)")
+    return parser.parse_args()
+
+
+def announce_presence(host, port):
+    UDP_IP = "255.255.255.255"
+    UDP_PORT = 12345
     
-# start server
-flights_server = SimpleXMLRPCServer(('localhost', 8001), logRequests=True)
+    client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
-flights_server.register_function(handle_request, 'handle_request')
-flights_server.register_function(prepare_commit, 'prepare_commit')
-flights_server.register_function(commit, 'commit')
-flights_server.register_function(abort, 'abort')
+    keep_trying = True 
 
-event_logger.info("Flights server is ready to accept requests.")
-flights_server.serve_forever()
+    while keep_trying:
+        message = "Flight booking server running. host=%s, port=%s" %(host, port)
+        event_logger.info(message)
+        client_socket.sendto(message.encode(), (UDP_IP, UDP_PORT))
+        acknowledgment, server_address = client_socket.recvfrom(1024)
+        if acknowledgment.decode().startswith("OK"):
+            break
+        event_logger.info("Sleep - Announce presence every 5 seconds")
+        time.sleep(5)  # Announce presence every 5 seconds
+
+    _, nodes = acknowledgment.decode().split(":")
+    messages = nodes.split(";")
+    for msg in messages:
+        event_logger.info("Reservation node connected: %s" %(msg))
+
+
+def main():
+    # start server
+    args = parse_arguments()
+    host = args.host
+    port = args.port    
+
+    announce_presence(host, port)
+    
+    # start server
+    flights_server = SimpleXMLRPCServer((host, port), logRequests=True)
+
+    flights_server.register_function(handle_request, 'handle_request')
+    flights_server.register_function(prepare_commit, 'prepare_commit')
+    flights_server.register_function(commit, 'commit')
+    flights_server.register_function(abort, 'abort')
+
+    event_logger.info("Flights server is ready to accept requests.")
+    flights_server.serve_forever()
+
+if __name__ == "__main__":
+    main()
