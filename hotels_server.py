@@ -190,6 +190,8 @@ def abort(hotel_request, departure_request, return_request, request_id):
 def handle_request(hotel_request, departure_request, return_request, request_id):
     
     flights_server = ServerProxy('http://localhost:8001')
+
+    flight_server_is_alive = True
     
     event_logger.info("hotel request data:")
     event_logger.info(hotel_request)
@@ -212,30 +214,26 @@ def handle_request(hotel_request, departure_request, return_request, request_id)
     #flights_server_prepared  = flights_server.prepare_commit(hotel_request, departure_request, return_request, request_id)
     #event_logger.info("flights server prepared: %s" %(flights_server_prepared))
 
-    #timer for waiting response
-    start_time = time.time()
-    while True:
+    flights_server_prepared = False
+
+    try:
+        socket.setdefaulttimeout(30)
         flights_server_prepared  = flights_server.prepare_commit(hotel_request, departure_request, return_request, request_id)
         event_logger.info("flights server prepared: %s" %(flights_server_prepared))
 
-        #if return is false or time out, stop waiting and continue
         # STEP 4: if flights node can't prepare commit, abort reservation in both nodes
         # and return False to coordinator node
-        if not flights_server_prepared or start_time == 90:
+        if not flights_server_prepared:
             abort(hotel_request, departure_request, return_request, request_id)
-            flights_server.abort(hotel_request, departure_request, return_request, request_id)
+            flights_server.abort(hotel_request, departure_request, return_request, request_id) if flight_server_is_alive else None
             return False
-        #if response returned true, break out of the loop and continue
-        elif flights_server_prepared:
-            break
-
-
-    # STEP 4: if flights node can't prepare commit, abort reservation in both nodes
-    # and return False to coordinator node
-    #if not flights_server_prepared:
-    #    abort(hotel_request, departure_request, return_request, request_id)
-    #    flights_server.abort(hotel_request, departure_request, return_request, request_id)
-    #    return False
+    except ConnectionRefusedError as ce:
+        event_logger.info("flights server is not responding, continuing without it")
+        flight_server_is_alive = False
+    except Exception as e:
+        event_logger.info("error:", e)
+        flight_server_is_alive = False
+        return False
 
     # STEP 5: if flights node committed, hotels node will write processing data to it's state array 
 
@@ -256,19 +254,21 @@ def handle_request(hotel_request, departure_request, return_request, request_id)
     # STEP 7: if hotels node can't commit, abort reservation in both nodes
     if not(reservation_OK):
         abort(hotel_request, departure_request, return_request, request_id)
-        flights_server.abort(hotel_request, departure_request, return_request, request_id)
+        flights_server.abort(hotel_request, departure_request, return_request, request_id) if flight_server_is_alive else None
         update_state_array(request_id, None, None, None, "aborted", state_array)
         return False
 
     # STEP 8: if hotels node committed, hotels node will ask flights node to also commit
-    flights_server_committed = flights_server.commit(hotel_request, departure_request, return_request, request_id)
-    event_logger.info("flights server committed: %s" %(flights_server_committed))
-    # STEP 10: if flights node can't commit, abort reservation in both nodes
-    if not flights_server_committed:
-        abort(hotel_request, departure_request, return_request, request_id)
-        flights_server.abort(hotel_request, departure_request, return_request, request_id)
-        update_state_array(request_id, None, None, None, "aborted", state_array)
-        return False
+    # if flights server is not alive, skip this step
+    if (flight_server_is_alive):    
+        flights_server_committed = flights_server.commit(hotel_request, departure_request, return_request, request_id)
+        event_logger.info("flights server committed: %s" %(flights_server_committed))
+        # STEP 10: if flights node can't commit, abort reservation in both nodes
+        if not flights_server_committed:
+            abort(hotel_request, departure_request, return_request, request_id)
+            flights_server.abort(hotel_request, departure_request, return_request, request_id)
+            update_state_array(request_id, None, None, None, "aborted", state_array)
+            return False
 
     # STEP 11: if flights node committed, hotels node will write done data to it's state array and return true to coordinator node
     status_msg = hotel_status_msg + " & " + flight_status_msg
@@ -332,7 +332,7 @@ def commit_book_flights(departure_flight_number, return_flight_number, request_i
     else:
         flights_reservation_can_be_made = False
         return flights_reservation_can_be_made
-
+prepare_commit
 def book_hotel(hotel_name, week_number):
 
     hotel_reservation_OK = False
@@ -359,9 +359,9 @@ def cancel_hotel(hotel_request):
     hotel_name = hotel_request.get("name", "")
     week_number = hotel_request.get("week", "")
             
-    hotel_data[hotel_name]["free_weeks"].append(week_number)
+    hotel_data[hotel_name]["free_weeks"].append(int(week_number))
     if week_number in hotel_data[hotel_name]["reserved_weeks"]:
-        hotel_data[hotel_name]["reserved_weeks"].remove(week_number)
+        hotel_data[hotel_name]["reserved_weeks"].remove(int(week_number))
     save_hotel_data()
 
 def book_flights(departure_flight_number, return_flight_number):
