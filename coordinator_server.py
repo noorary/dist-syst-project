@@ -7,29 +7,63 @@ import time
 import socket
 
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import utils.ds_logging as ds_logging
 
+##
+## Initiate logging 
+##
 event_logger = ds_logging.get_event_logger("coordinator.events")
 transaction_logger = ds_logging.get_transaction_logger("coordinator")
 
+def get_request_log_path(xml_request):
+
+    # Helper to create dir and path xml request log
+    
+    request_log_dir = Path("request_log")
+    request_log_dir.mkdir(parents=True, exist_ok=True)
+    hash_str = str(hash(xml_request))
+    full_request_log_path = request_log_dir.joinpath(hash_str)
+    return full_request_log_path
+
+
+def log_request(xml_request):
+    
+    # Check if request is something that we have not seen earlier.
+    # Check is based on xml request hash value.   
+    # If that is new one, create file using touch. List of files on dir
+    # is our log for request.   
+    
+    full_request_log_path = get_request_log_path(xml_request)
+    if full_request_log_path.exists():
+        # Based on hash this request has been processed earlier  
+        return False
+    else:
+        # Based on hash this is new request 
+        full_request_log_path.touch()
+        return True
+
+def remove_log_request(xml_request):
+
+    # In case of failed request remove also request log entry 
+
+    full_request_log_path = get_request_log_path(xml_request)
+    if full_request_log_path.exists():
+        full_request_log_path.unlink()
+
 def get_request_id(xml_request):
+
+    # Small helper to extract ID from xml request
+    
     root = ET.fromstring(xml_request)
     value = root.find(f".//member[name='id']/value")
     return value[0].text
 
-def send_prepare_to_participant(participant, request_id):
-    return participant.prepare_commit(request_id)
-
-def send_commit_to_participant(participant, request_id):
-    return participant.commit(request_id)
-
-def send_abort_to_participant(participant, request_id):
-    return participant.abort(request_id)
-
-
 def parse_xml_request(xml_request, element_name):
-
+    
+    # Small helper to parse and extract named element 
+    
     root = ET.fromstring(xml_request)
     element = root.find(f".//member[name='{element_name}']/value/struct")
 
@@ -48,6 +82,15 @@ def parse_xml_request(xml_request, element_name):
     event_logger.info(element_details)
     return element_details
 
+def send_prepare_to_participant(participant, request_id):
+    return participant.prepare_commit(request_id)
+
+def send_commit_to_participant(participant, request_id):
+    return participant.commit(request_id)
+
+def send_abort_to_participant(participant, request_id):
+    return participant.abort(request_id)
+
 def send_booking_request(xml_request):
     
     event_logger.info('coordinator starting')
@@ -57,6 +100,12 @@ def send_booking_request(xml_request):
     event_logger.info('parsing request data')
 
     request_id = get_request_id(xml_request)
+    is_new_request = log_request(xml_request)
+    if not is_new_request:
+        # This request has been processes earlier => reject 
+        transaction_logger.info("id=%s, status=Rejected" %(request_id))
+        return False
+
     transaction_logger.info("id=%s, status=Received" %(request_id))
     departure_flight = parse_xml_request(xml_request, 'departure_flight')
     returning_flight = parse_xml_request(xml_request, 'returning_flight')
@@ -83,6 +132,7 @@ def send_booking_request(xml_request):
         event_logger.info('event=request, response=%s'%(result))
     except ConnectionRefusedError:
         event_logger.info('event=request, response=ConnectionRefusedError')
+        remove_log_request(xml_request)
         result = False
 
     reservation_OK = result
@@ -92,6 +142,9 @@ def send_booking_request(xml_request):
 
 
 def parse_arguments():
+
+    # Parse command line arguments 
+
     parser = argparse.ArgumentParser(description="Coordinator server for The Booking System")
 
     parser.add_argument("-H", "--host", type=str, default="localhost", help="Host name (default: localhost)")
@@ -99,6 +152,11 @@ def parse_arguments():
     return parser.parse_args()
 
 def discover_nodes():
+
+    # Node discovery
+    # Receive messages from reservation nodes
+    # Uses UPD
+
     UDP_IP = "255.255.255.255"
     UDP_PORT = 12345
     event_logger.info("Reservation node discovery started")
@@ -106,6 +164,9 @@ def discover_nodes():
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_socket.bind(("", UDP_PORT))
     server_socket.settimeout(5)
+
+    # We want at least two reservation nodes to be available before going forward 
+    #
     hosts = {}
     while len(hosts) < 2:
         try:
